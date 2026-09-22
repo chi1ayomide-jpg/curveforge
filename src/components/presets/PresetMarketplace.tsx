@@ -50,14 +50,14 @@ export const PresetMarketplace: React.FC<PresetMarketplaceProps> = ({ onSelectPr
           <div>
             <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
               <Bookmark className="w-5 h-5 text-cf-accent" />
-              Institutional & Production Curve Presets
+              Reference Curve Architectures
             </h2>
             <p className="text-xs text-cf-muted mt-1">
-              Engineered configurations optimized for specific market structures, anti-sniper protection, real-world assets, and automated graduation.
+              Curated configurations for specific market structures — equity discovery, RWA depth, AI-agent utility, fair-launch, liquidity bootstrap, and constant-product.
             </p>
           </div>
           <div className="text-xs font-mono text-cf-muted bg-cf-dark px-3 py-1.5 rounded border border-cf-border/60">
-            {CURVEFORGE_PRESETS.length} Battle-Tested Architectures
+            {CURVEFORGE_PRESETS.length} Verified Architectures
           </div>
         </div>
       </div>

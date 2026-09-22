@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { Play, RotateCcw, CheckCircle2, TrendingUp, DollarSign, Activity, Layers } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Play, RotateCcw, CheckCircle2, TrendingUp, DollarSign, Activity, Layers, ArrowDown } from 'lucide-react';
 import { CurveConfiguration } from '../../domain/curve/curve-types';
 import { compileCurve } from '../../domain/curve/curve-builder';
 import { SimulationEngine } from '../../domain/simulation/simulation-engine';
@@ -38,22 +38,25 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
   // Custom sandbox trade state
   const [customTradeAmount, setCustomTradeAmount] = useState<number>(10);
   const [customTradesHistory, setCustomTradesHistory] = useState<TradeStepResult[]>([]);
-  const customEngine = useMemo(() => {
-    if (!compiled) return null;
-    return new SimulationEngine(config, compiled);
-  }, [config, compiled]);
+  // Stable engine reference for the interactive sandbox — rebuilt only when compiled changes
+  const sandboxEngineRef = useRef<SimulationEngine | null>(null);
+  if (compiled && !sandboxEngineRef.current) {
+    sandboxEngineRef.current = new SimulationEngine(config, compiled);
+  }
 
   const handleResetSandbox = () => {
-    if (customEngine) {
-      customEngine.reset();
-    }
+    sandboxEngineRef.current = compiled ? new SimulationEngine(config, compiled) : null;
     setCustomTradesHistory([]);
   };
 
-  const handleExecuteSandboxTrade = () => {
-    if (!customEngine || customTradeAmount <= 0) return;
+  const handleExecuteSandboxTrade = (tradeType: 'BUY' | 'SELL') => {
+    const engine = sandboxEngineRef.current;
+    if (!engine || customTradeAmount <= 0) return;
     const nextIndex = customTradesHistory.length + 1;
-    const result = customEngine.executeBuy(customTradeAmount, nextIndex, nextIndex * 15);
+    const result =
+      tradeType === 'BUY'
+        ? engine.executeBuy(customTradeAmount, nextIndex, nextIndex * 15)
+        : engine.executeSell(customTradeAmount, nextIndex, nextIndex * 15);
     setCustomTradesHistory(prev => [...prev, result]);
   };
 
@@ -70,7 +73,7 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
       const normalizedY = (res.priceAfter - minPrice) / Math.max(1e-12, maxPrice - minPrice);
       const clampedY = Math.max(0, Math.min(1, normalizedY));
       const y = 200 - clampedY * 160;
-      return { x, y, price: res.priceAfter, step: index + 1, impact: res.priceImpactPercent };
+      return { x, y, price: res.priceAfter, step: index + 1, impact: res.priceImpactPercent, type: res.type };
     });
   }, [scenarioResult, compiled]);
 
@@ -198,19 +201,22 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
                     />
                   )}
 
-                  {/* Trajectory Points */}
-                  {trajectoryPoints.map((p, i) => (
-                    <g key={i}>
-                      <circle
-                        cx={p.x}
-                        cy={p.y}
-                        r={p.impact > 5 ? 4.5 : 3}
-                        fill={p.impact > 5 ? '#f59e0b' : '#38bdf8'}
-                        stroke="#0b0f17"
-                        strokeWidth="1.5"
-                      />
-                    </g>
-                  ))}
+                  {/* Trajectory Points — sky=BUY, rose=SELL, amber=high-impact */}
+                  {trajectoryPoints.map((p, i) => {
+                    const dotColor = p.type === 'SELL' ? '#f87171' : p.impact > 5 ? '#f59e0b' : '#38bdf8';
+                    return (
+                      <g key={i}>
+                        <circle
+                          cx={p.x}
+                          cy={p.y}
+                          r={p.impact > 5 ? 4.5 : 3}
+                          fill={dotColor}
+                          stroke="#0b0f17"
+                          strokeWidth="1.5"
+                        />
+                      </g>
+                    );
+                  })}
                 </svg>
               </div>
             </div>
@@ -233,7 +239,7 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
                   <th className="py-2.5 px-3">#</th>
                   <th className="py-2.5 px-3">Type</th>
                   <th className="py-2.5 px-3">Input</th>
-                  <th className="py-2.5 px-3">Output Base</th>
+                  <th className="py-2.5 px-3">Output</th>
                   <th className="py-2.5 px-3">Effective Price</th>
                   <th className="py-2.5 px-3">Impact</th>
                   <th className="py-2.5 px-3">Fee Paid</th>
@@ -242,43 +248,56 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-cf-border/40">
-                {scenarioResult.sim.trades.map((res: TradeStepResult, idx: number) => (
-                  <tr key={idx} className="hover:bg-cf-dark/60 transition-colors">
-                    <td className="py-2 px-3 text-cf-muted">{idx + 1}</td>
-                    <td className="py-2 px-3">
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cf-emerald/15 text-cf-emerald border border-cf-emerald/30">
-                        {res.type}
-                      </span>
-                    </td>
-                    <td className="py-2 px-3 text-white">
-                      {res.inputAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}{' '}
-                      <span className="text-cf-muted text-[10px]">{config.quote.symbol}</span>
-                    </td>
-                    <td className="py-2 px-3 text-white font-medium">
-                      {res.outputAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}{' '}
-                      <span className="text-cf-muted text-[10px]">{config.symbol}</span>
-                    </td>
-                    <td className="py-2 px-3 text-cf-accent">
-                      ${res.effectivePrice.toFixed(6)}
-                    </td>
-                    <td className={`py-2 px-3 ${res.priceImpactPercent > 5 ? 'text-amber-400 font-bold' : 'text-cf-muted'}`}>
-                      {res.priceImpactPercent.toFixed(2)}%
-                    </td>
-                    <td className="py-2 px-3 text-cf-muted">
-                      {res.feeAmount.toFixed(4)} {config.quote.symbol}
-                    </td>
-                    <td className="py-2 px-3 text-white">
-                      {res.segmentsCrossed > 0 ? (
-                        <span className="text-amber-400 font-bold">+{res.segmentsCrossed} segs</span>
-                      ) : (
-                        <span className="text-cf-muted">0 segs</span>
-                      )}
-                    </td>
-                    <td className="py-2 px-3 text-cf-muted">
-                      {res.cumulativeQuoteReserve.toFixed(2)} {config.quote.symbol}
-                    </td>
-                  </tr>
-                ))}
+                {scenarioResult.sim.trades.map((res: TradeStepResult, idx: number) => {
+                  const isSell = res.type === 'SELL';
+                  return (
+                    <tr key={idx} className="hover:bg-cf-dark/60 transition-colors">
+                      <td className="py-2 px-3 text-cf-muted">{idx + 1}</td>
+                      <td className="py-2 px-3">
+                        {isSell ? (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                            {res.type}
+                          </span>
+                        ) : (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-cf-emerald/15 text-cf-emerald border border-cf-emerald/30">
+                            {res.type}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-white">
+                        {res.inputAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}{' '}
+                        <span className="text-cf-muted text-[10px]">
+                          {isSell ? config.symbol : config.quote.symbol}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-white font-medium">
+                        {res.outputAmount.toLocaleString(undefined, { maximumFractionDigits: 4 })}{' '}
+                        <span className="text-cf-muted text-[10px]">
+                          {isSell ? config.quote.symbol : config.symbol}
+                        </span>
+                      </td>
+                      <td className="py-2 px-3 text-cf-accent">
+                        ${res.effectivePrice.toFixed(6)}
+                      </td>
+                      <td className={`py-2 px-3 ${res.priceImpactPercent > 5 ? 'text-amber-400 font-bold' : 'text-cf-muted'}`}>
+                        {res.priceImpactPercent.toFixed(2)}%
+                      </td>
+                      <td className="py-2 px-3 text-cf-muted">
+                        {res.feeAmount.toFixed(4)} {config.quote.symbol}
+                      </td>
+                      <td className="py-2 px-3 text-white">
+                        {res.segmentsCrossed > 0 ? (
+                          <span className="text-amber-400 font-bold">{isSell ? '-' : '+'}{res.segmentsCrossed} segs</span>
+                        ) : (
+                          <span className="text-cf-muted">0 segs</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-3 text-cf-muted">
+                        {res.cumulativeQuoteReserve.toFixed(2)} {config.quote.symbol}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -291,10 +310,10 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
           <div>
             <h3 className="text-base font-bold text-white font-mono flex items-center gap-2">
               <DollarSign className="w-4 h-4 text-cf-accent" />
-              Manual Sandbox Trade Executor
+              Interactive Sandbox — Step-Through Trader
             </h3>
             <p className="text-xs text-cf-muted mt-0.5">
-              Step through arbitrary live buys to test custom stress conditions against your piecewise curve configuration.
+              Execute individual BUY or SELL trades to stress-test your piecewise curve configuration. State is preserved across steps.
             </p>
           </div>
           <button
@@ -308,7 +327,8 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end bg-cf-dark p-4 rounded border border-cf-border/60">
           <div>
             <label className="block text-xs font-mono text-cf-muted mb-1">
-              Buy Amount ({config.quote.symbol})
+              Trade Amount
+              <span className="text-slate-500 ml-2">(BUY = quote in · SELL = base token in)</span>
             </label>
             <input
               type="number"
@@ -320,7 +340,7 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
           </div>
 
           <div className="text-xs font-mono">
-            <span className="text-cf-muted">Sandbox Ledger:</span>
+            <span className="text-cf-muted">Sandbox State:</span>
             <div className="text-white font-medium mt-0.5">
               Trades Executed: {customTradesHistory.length}
             </div>
@@ -332,12 +352,18 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
             </div>
           </div>
 
-          <div>
+          <div className="flex flex-col gap-2">
             <button
-              onClick={handleExecuteSandboxTrade}
+              onClick={() => handleExecuteSandboxTrade('BUY')}
               className="w-full bg-cf-accent hover:bg-cf-accent-hover text-black font-mono font-bold text-xs py-2 px-4 rounded flex items-center justify-center gap-1.5 transition-all shadow-lg shadow-cf-accent/10"
             >
-              <Play className="w-3.5 h-3.5 fill-current" /> Execute Step
+              <Play className="w-3.5 h-3.5 fill-current" /> BUY (Quote → Base)
+            </button>
+            <button
+              onClick={() => handleExecuteSandboxTrade('SELL')}
+              className="w-full bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-rose-100 font-mono font-bold text-xs py-2 px-4 rounded flex items-center justify-center gap-1.5 transition-all border border-rose-500/30 hover:border-rose-500/50"
+            >
+              <ArrowDown className="w-3.5 h-3.5" /> SELL (Base → Quote)
             </button>
           </div>
         </div>
@@ -345,18 +371,24 @@ export const SimulatorPanel: React.FC<SimulatorPanelProps> = ({ config }) => {
         {/* Custom Trades History if any */}
         {customTradesHistory.length > 0 && (
           <div className="mt-4 border-t border-cf-border/60 pt-4">
-            <div className="text-xs font-mono text-cf-muted mb-2">Sandbox Ledger ({customTradesHistory.length} trades executed):</div>
-            <div className="space-y-1.5 max-h-40 overflow-y-auto">
-              {customTradesHistory.map((res: TradeStepResult, i: number) => (
-                <div key={i} className="flex items-center justify-between text-xs font-mono bg-cf-dark px-3 py-1.5 rounded border border-cf-border/40">
-                  <span className="text-cf-emerald font-bold">
-                    #{i + 1} BUY {res.inputAmount} {config.quote.symbol} → {res.outputAmount.toFixed(4)} {config.symbol}
-                  </span>
-                  <span className="text-cf-accent">Spot: ${res.priceAfter.toFixed(6)}</span>
-                  <span className="text-cf-muted">Impact: {res.priceImpactPercent.toFixed(2)}%</span>
-                  <span className="text-cf-muted">Quote Res: {res.cumulativeQuoteReserve.toFixed(2)}</span>
-                </div>
-              ))}
+            <div className="text-xs font-mono text-cf-muted mb-2">Sandbox Ledger ({customTradesHistory.length} trades):</div>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+              {customTradesHistory.map((res: TradeStepResult, i: number) => {
+                const isSell = res.type === 'SELL';
+                return (
+                  <div key={i} className={`flex items-center justify-between text-xs font-mono px-3 py-1.5 rounded border ${isSell ? 'bg-rose-500/5 border-rose-500/20' : 'bg-cf-dark border-cf-border/40'}`}>
+                    <span className={`font-bold ${isSell ? 'text-rose-400' : 'text-cf-emerald'}`}>
+                      #{i + 1} {res.type}{' '}
+                      {res.inputAmount.toFixed(4)} {isSell ? config.symbol : config.quote.symbol}
+                      {' → '}
+                      {res.outputAmount.toFixed(4)} {isSell ? config.quote.symbol : config.symbol}
+                    </span>
+                    <span className="text-cf-accent">Spot: ${res.priceAfter.toFixed(6)}</span>
+                    <span className="text-cf-muted">Impact: {res.priceImpactPercent.toFixed(2)}%</span>
+                    <span className="text-cf-muted">Res: {res.cumulativeQuoteReserve.toFixed(2)}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
